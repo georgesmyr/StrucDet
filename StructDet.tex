@@ -1,0 +1,377 @@
+\documentclass{article}
+\usepackage{a4wide}
+\usepackage{bm}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{subcaption}
+
+
+\title{Unsupervised learning for local structure detection in system with hard spheres}
+\author{Georgios Smyridis}
+\date{}
+\begin{document}
+\maketitle
+
+
+
+\section{Introduction}
+
+A significant challenge to overcome when studying the self-assembly products of colloidal systems, is phase detection. For systems of which the basic phases are known, one can construct order parameters that describe the local structure of single particles, and thus detect which expected phase the particle is in. 
+However, in many cases the expected phases of the system are not known, and thus, the selection of an appropriate order parameter is complicated. 
+In such a context, unsupervised (machine) learning, being effective in detecting patterns and structures in large datasets, proves itself very valuable.
+
+In this report we are going to provide an example of phase detection for a system of hard spheres, employing unsupervised learning techniques based on bond order parameters.
+In Section \ref{theory} we describe the algorithm that we are going to use for local environment classification, providing a concise description for each component technique. 
+%More specifically, we are going to use neural-network-based autoencodes for dimensionality reduction, and Gaussian mixture models the for clustering. 
+In section 3, we present our results, and compare with the ones provided in the literature \cite{main}.
+
+
+\section{Theory}\label{theory}
+
+The overall process of phase detection in our algorithm consists of three steps: First, we describe each particle's local environment using bond orientational order parameters. There are ample of such parameters and they can be organised in a high dimensional vector space. Not all of them are relevant, and to extract the relevant information, we use dimensionality reduction with neural-network-based autoencoders. In that lower dimensional subspace, hopefully, the particles that are in the same phase will be grouped together with a clustering algorithm (Gaussian Mixture Models). After we have clustered the lower-dimensional representation of our data, we go back to the original vector space that our data live and plot the distribution of BOPs for each cluster. What we look for each averaged BOPs that have well separated distributions for the different clusters. These degrees of freedom are the ones that predict the phase of the system. In the final step we rank these predictive parameters by order of importance using contribution analysis (input perturbation and improves stepwise function).
+
+\subsection{Local environment description with bond-order-paraeters}\label{local_env}
+
+	To characterise the local environment of each particle, we use the averaged bond order parameters (BOPs) \cite{bops}. For any given particle $i$ we define the complex quantities
+	\begin{align}
+		q_{lm}(i)=\frac1{N_b(i)}\sum_{j\in\mathcal{N}_b(i)}Y_l^m(\bm{r}_{ij})
+	\end{align}
+	where $Y_l^m(\bm{r}_{ij})$ are the spherical harmonics of order $l$, with $m$ an integer that runs from $m=-l$ to $m=l$. Additionally, $\bm{r}_{ij}$ is the vector from particle $i$ to particle $j$, and $\mathcal{N}_b(i)$ is the set of nearest neighbours of particle $i$, which we define later. Note that $|\mathcal{N}_b(i)|=N_b(i)$. Then, we define the average $\bar q_{lm}(i)$ as
+	\begin{align}
+		\bar q_{lm}(i)=\frac1{N_b(i)+1}\sum_{k\in\{i\}\cup\mathcal{N}_b(i)}q_{lm}(k)
+	\end{align}
+	where the sum runs over all nearest neighbours of particle $i$ as well as particle $i$ itself. Averaging over the nearest neighbour values of $q_{lm}$ results in effectively in also taking next-nearest neighbours into account. Finally, we define rotationally invariant BOPs as
+	\begin{align}
+		\bar q_l(i)=\sqrt{
+		\frac{4\pi}{2l+1}
+		\sum_{m=-l}^l|\bar q_{lm}(i)|^2
+		}
+	\end{align}
+	which, depending on the choice of $l$, are sensitive to different crystal symmetries.
+	
+	The optimal set of BOPs to be considered strongly depends on the structures one wishes to distinguish. Since our method is meant to be applied to systems for which such prior knowledge is missing, in order to describe the local environment of one particle, we evaluate several $\bar q_l$ with $l$ ranging from 1 to 8.
+	Therefore, when considering one component systems, our description of the local environment of particle $i$ is encoded into an $8$-dimensional vector
+	\begin{align}
+		\bm{Q}(i)=(\{\bar{q}_l\}),
+		\label{state_vector}
+	\end{align}
+	with $l$ integer from 1 to 8.
+	
+\subsubsection{Nearest Neighbours}
+
+When calculating the BOPs, one is confronted with the task of determining the nearest neighbours of a particle.
+ However, in practice, there is no unique definition of nearest neighbours. 
+ The definitions have opted to make use of, is a recently introduced nearest-neighbour criterion, called solid angle nearest neighbours SANNs \cite{sanns}.
+ 
+ 
+In this approach, an effective individual cutoff is found for every particle in the system based on its local environment.
+More concretely, consider a system where we have a particle $i$ located at position $\bm{r}_i$ surrounded by particles $\{j\}$. 
+The fixed-distance cutoff defines the set of nearest neighbours of particle $i$ to be all the particles $\{j\}$ with distance to $i$ smaller than some threshold $R$. i.e.
+\begin{align}
+	\mathcal{N}_b(i)=\{n:n\in \{j\}\wedge r_{in}\leq R\}
+\end{align}
+As mentioned above, the SANN algorithm determines an \textit{individual} cutoff distance $R_i^{(m)}$ for each particle $i$, which we call the \textit{shell radius}. 
+This radius depends solely on the local environment of each particle $i$ and includes its $m$ nearest neighbours. 
+For the computation of $R_i^{(m)}$ SANN uses a purely geometrical construction and is thus parameter-free and scale-free.
+\\
+
+Now, we move on to the calculation of the individual cut-off distance $R_i^{(m)}$.
+First, we order the particles $\{j\}$ surrounding $i$ such that $r_{i,j}\leq r_{i,j+1}$ for all $j$. This relates the shell distance $R_i^{(m)}$ and the number of nearest neighbours $m$ in the following manner:
+\begin{align}
+	r_{i,m}\leq R_i^{(m)}<r_{i,m+1}. \label{shell_radius_rel}
+\end{align}
+Then, starting with the particle closest to $i$ we associate with each potential neighbour $j$ an angle $\theta_{i,j}$ based on the distance between the particles $r_{i,j}=|\bm{r}_i-\bm{r}_j|$ and the yet undetermined shell radius $R_i^{(m)}$
+
+
+SANN defines the neighborhood of a particle $i$ to consist of the closest $m$ particles $\{j\}$ such that the sum of their solid angles associates with $\theta_{i,j}$ equals to $4\pi$, i.e.,
+\begin{align}
+	4\pi=\sum_{j=1}^m2\pi\big(1-\cos\theta_{i,j}\big)=\sum_{j=1}^m2\pi\left(1-\frac{r_{i,j}}{R_i^{(m)}}\right)
+	\label{sanns_definitions}
+\end{align}
+Combining \eqref{shell_radius_rel} and \eqref{sanns_definitions} leads to a condition for the determination of the neighbour shell radius,
+\begin{align}
+	R_i^{(m)}=\frac{\sum_{j=1}^m r_{i,j}}{m-2}<r_{i,m+1},
+	\label{shell_radius_def}
+\end{align}
+where $R_i^{(m)}$ refers to the shell radius containing $m$ particles. To solve this inequality, we start with the smallest number of neighbours capable of satisfying it, $m=3$, and increase $m$ iteratively. During each iteration, we evaluate \eqref{shell_radius_def} and the smallest $m$ that satisfies the equation yieds the number of neighbours $N_b(i)$ with $R_i^{(m)}$ the corresponding neighbour shell radius. 
+\\
+
+This method is not inherently symmetric, i.e. $j$ might be a neighbour of $i$ while $i$ is not a neighbour of $j$. However, symmetry can be enforced by either adding $j$ to the neighbours of $i$ or removing $i$ from the neighbours of $j$. We choose to enforce symmetry with the latter approach.
+
+
+%\section{Dimensionality Reduction}
+%
+%In this report, the training data are the vectors $\bm{Q}(i)$, defined in \eqref{state_vector}, evaluated from snapshots of systems obtained via computer simulations, and the dimensionality reduction algorithm is trained to find a low-dimensional projections of such vectors by eliminating irrelevant and redundant information. 
+%
+%\subsection{Principal Component Analysis (PCA)}
+%
+%A ubiquitous method of dimensional reduction, data visualisation and analysis is Principal Component Analysis (PCA). The goal of PCA is to perform an orthogonal transformation of the data in order to find the highest variance directions, since in this directions one finds the most relevant information of a signal. Directions with small variance are ascribed to "noise" and can potentially be removed or ignored.
+%\begin{figure}[ht!]
+%	\centering
+%	\includegraphics[scale =0.5]{images/PCA_var.png}	
+%	\caption{PCA seeks to find orthogonal directions with largest variance. Here, in 2D, the major axis of the ellipse corresponds to the first principal component, i.e. the direction with the highest variance, which is assumed to correspond to the true signal. The remaining direction is chosen to be perpendicular to the first, and it is assumed to corresponds to noise.}
+%\end{figure}
+
+
+
+
+
+\subsection{Dimensionality Reduction: Autoencoders}
+
+Autoencoders \cite{autoencoders} are a type of artificial neural network (ANN) architecture that are primarily used for unsupervised learning and dimensionality reduction. They are designed to learn efficient representations of input data by compressing the input into a lower-dimensional latent space and then reconstructing the original input from this compressed representation.
+\begin{figure}
+	\centering
+	\includegraphics[scale = 0.5]{images/autoencoder.png}
+	\caption{Architecture of a neural-network based autoencoder. The autoencoder finds a low-dimensional representation of the input, from which the decoder reconstructs an approximation of the input as output.}	
+\end{figure}
+\\
+
+In the present context, we employ feedforward and fully connected autoencoders like in the figure. The number of input and output nodes, $d$ is specified by the dimensionality of the input vector $\bm{Q}(i)\in\mathbb{R}^d$, which are approximately reconstructed by the network in the output layer 
+\begin{align}
+	\hat{\bm{Q}}(i)=\bm{\Theta}_{\text{autoencode}}(\bm{Q}(i))=(\bm{\Theta}_{\text{decode}}\circ\bm{\Theta}_{\text{encode}})(\bm{Q}(i))\in\mathbb{R}^d.
+\end{align}
+The bottleneck layer contains the low-dimensional projection to be learned by the encoder, $\bm{Y}(i)=\bm{\Theta}_{\text{encode}}(\bm{Q}(i))\in\mathbb{R}^c$, whose dimensionality is controlled by the number of bottleneck nodes, $c<d$. 
+\\
+
+Each node $k$ in layer $i$ operates on its input, $x_k^{(i)}$, via an activation function to produce an output $y_k^{(i)}=f^{(i)}(x_k^{(i)})$. The input to each node in a fully connected, feedforward architecture (without bias) is the weighted sum of the output of the previous layer
+\begin{align}
+	x_k^{(i)}=\sum_{j}w_{jk}^{(i-1)}y_j^{(i-1)}=\bm{W}^{(i-1)}\cdot \bm{y}^{(i-1)},
+\end{align}
+where here $w^{(i-1)}_{jk}$ is the weight of the connection between node $j$ in layer $(i-1)$ and node $k$ in node $i$.
+Nonlinearity is achieved by providing both the encoder and the decoder with a fully-connected hidden layer with a nonlinear activation function. Here, we set the number of nodes in the hidden layer to $10d$ and use a hyperbolic tangent as the activation function. For the bottleneck and output layers, instead, a linear activation function is used.
+
+The training of the network amounts to adjusting the weights of the network so as to optimise the reconstruction error of the input dataset
+\begin{align}
+	E\big(\bm{W}, \{\bm{Q}(i)\}\big)=\sum_{i}\big|\bm{Q}(i)-\bm{\hat Q}(i)\big|^2+\Gamma\big(\bm{W}\big),
+\end{align}
+where $\Gamma\big(\bm{W}\big)$ is a regularisation term in order to control the magnitude of the network weights during training and thus prevent overfitting. In our case, we choose L2 regularisation, which means that $\Gamma(\bm{W})=\lambda\sum_{i,j,k}\big(w_{jk}^{(i)}\big)^2$. The optimisation is conducted using mini-batch stochastic gradient descent with momentum.
+
+
+\subsection{Contribution Analysis}
+
+ANNs have the capacity to predict output variable ,but they are often considered black boxed, in the sense that the mechanisms that occur within the network are often ignored. Various authors have explored this problem and proposed algorithms to illustrate the role of variables in ANN models. Most works, however, focus on methods that eliminate irrelevant input and reduce the size of the network. 
+
+Even though good prediction and eliminating redundancy is desirable, knowing what contribution each variable makes is of prime importance as well. Contribution analysis uses methods to determine the influence of each input variable and its contribution to the output. They are not, therefore, pruning methods but procedures to estimate the relative contribution of each input variable. The methods that will interest us are the "input perturbation" and the "improved stepwise" methods \cite{contranal}. As we will see, both techniques require a single trained model, avoid having to repeat the training multiple times.
+
+\subsubsection{Input Perturbation Method}
+
+This input perturbation method aims to assess the effect of small perturbations in each input of the neural network to its output. The algorithm adjusts the input values of one variable, by adding a perturbation, $x_i\rightarrow x_i + \delta$ with $\delta/x_i\in[0,0.5]$, while keeping the rest fixed. The effect of these input perturbations is reflected in the cost function, say MSE. In fact, the MSE of the neural network output is expected to increase as a larger amount of noise is added to the selected input variable. Wen can thus rank the importance of each input node based on the increase in MSE, the largest such change corresponding to the input node of highest importance.
+
+\subsubsection{Improved Stepwise Method}
+
+Stepwise selection is an iterative process that starts with an empty model and incrementally adds or removes features based on certain criteria. The two main variations of stepwise selection are forward selection and backward elimination, the one being the mirror image of the other. In our work, we assess the relative importance of the input nodes using backwards elimination. 
+
+In this approach, the algorithm starts with a model containing all the features and removes one feature at a time, replacing all its values with its mean over the whole dataset. At each step, the algorithm evaluates the performance of the model after removing a feature and selects the one whose removal has the least impact on the model's performance based on the magnitude of the cost function, MSE. The process continues until removing any additional feature significantly degrades the model's performance.
+
+\subsubsection{Relative Importance}
+
+Both methods evaluate the importance of each node by its effect on the cost function, MSE. We quantify the relative importance of the $k$-th input node with
+\begin{align}
+	RI_k=\frac{\Delta E_k}{\sum_{j=1}^d\delta E_j},
+\end{align}
+with $\Delta E_j$ being the change in MSE caused by the change applied to the input node $j$, and the sum in the denominator is taken over all the input nodes.
+
+
+
+
+
+\subsection{Clustering: Gaussian Mixture Models}
+
+Clustering is the task of examining a dataset, and trying to find similar instances and assigning them to clusters, or groups of similar instances. Clustering can be though of as a classification task with the core difference that it is unsupervised as opposed to supervised. The algorithm we use for the clustering in this work is the Gaussian Mixture Models (GMMs) 
+
+
+
+
+
+\subsection{Gaussian Mixtures}
+
+GMMs are a type of generative model utilized to represent intricate data distributions and are especially valuable for performing data clustering. By being generative, GMMs aims to understand the underlying probability distribution of the input data. The fundamental assumption is that data points within each cluster originate from a multivariate Gaussian distribution.
+
+GMMs merge multiple Gaussian distributions to construct a mixture model. Each Gaussian distribution corresponds to a distinct component within the data. The mixture model defines the proportions or weights assigned to each component, denoting their respective contributions to the overall distribution.
+
+The objective of GMMs training involves estimating the model parameters such as means, covariance matrices, and weights, which best capture the observed data. This estimation is commonly accomplished using the Expectation Maximization (EM) algorithm.
+
+
+\subsubsection{Finding the number of clusters}
+
+The most straightforward way to cluster data using GMMs involves treating each mixture component as a distinct cluster and assigning each observation to the component that has the highest posterior probability. However, this approach works well only when the clusters are genuinely generated from a combination of separate multivariate normal distributions. In reality, the clusters underlying our data often deviate significantly from Gaussian distribution in space. Consequently, a single cluster in the data may be identified as two or more mixture components if its distribution is better approximated by a mixture of Gaussians rather than a single Gaussian function. This implies that the number of clusters in the data may differ from the number of components by minimizing the Bayesian Information Criterion (BIC) \cite{bic}.
+
+\cite{clustering} argues that the goal of selecting the number of mixture components for estimating the underlying probability density is well met by BIC, and thus it is used to select the number of components in the mixture model. They then propose a sequence of possible solution by a hierarchical combination of the components identified by BIC. 
+The dicision about which components to combine is based on minimising the entropy of the resulting clustering define as
+\begin{align}
+	S_K=-\sum_{i=0}^N\sum_{j=1}^K p_{ij}\ln(p_{ij})
+\end{align}
+where $N$ is the number of observations and $K$ is the number of clusters. Practically, the optimal number of clusters is found by looking at the existense of an elbow in the entropy $S_K$ as a function of $K$.
+
+
+\section{Results}\label{results}
+
+To test this methodology we apply it for a simulated system of 1372 hard spheres with diameter $d$. The initial configuration for each simulation is an FCC crystal, with lattice spacing $4*d$, and then we set the desired phase by setting the appropriate number density. More specifically, we simulated two FCC crystals and two fluid phases with different number densities, provided in Table 1. For each different system we took three snapshots over time, that is, we saved the positions of all particles. We end up in total with 12 snapshots $l$, and thus a dataset of 16464 points.
+\begin{figure}[ht!]
+\begin{align}
+	\begin{tabular}{|c|c|}
+		\hline
+		Phase & Number density $\rho d^3$\\
+		\hline
+		FCC1 & 1.05\\
+		FCC2 & 1.01\\
+		FLUID1 & 0.86\\
+		FLUID2 & 0.80\\
+		\hline
+	\end{tabular}\nonumber
+\end{align}
+\caption*{Table 1: Number of density $\rho d^3$ for each phase of the system we simulated.} 
+\end{figure}
+
+For each snapshot, we assign to each particle an 8-dimensional vector $\bm{Q}_l(i)$, where $i$ is the particles, and $l$ is the snapshot. The details of the construction are given in Section \ref{local_env}.
+
+%\subsection{Principal Component Analysis}
+%
+%First we discard the irrelevant degrees of freedom from the dataset with principal component analysis (PCA), which applies a linear projections to a lower-dimensional subspace. To determine the dimension of that subspace, we plot the cumulative explained variance of the model and choose the dimension that corresponds to a sufficient value. That value is usually chosen to be $0.95$ since it already has sufficient explanatory power. The proper dimension for the projection subspace is thus 1.
+%\begin{figure}
+%     \centering
+%     \begin{subfigure}[b]{0.47\textwidth}
+%         \centering
+%         \includegraphics[width=\textwidth]{images/pca_explained_variance.png}
+%         \caption{Cummulative explained variance of PCA as a function of the dimension of the subspace.}
+%         \label{fig:y equals x}
+%     \end{subfigure}
+%     \hfill
+%     \begin{subfigure}[b]{0.44\textwidth}
+%         \centering
+%         \includegraphics[width=\textwidth]{images/gmm_pca_bic.png}
+%         \caption{BIC of Gaussian mixture models on the subsspace that is produced by PCA as a function of number of components.}
+%         \label{fig:three sin x}
+%     \end{subfigure}
+%     
+%       \vspace{1cm}
+%       
+%       \begin{subfigure}{0.47\textwidth}
+%       		\centering
+%       		\includegraphics[scale=0.5]{images/gmm_pca.png}
+%       		\caption{Projection of the vector $\bm{Q}(i)$ onto the 2-dimensional subspace found by the PCA. Colors represent the distinct environments identified by the clustering.}
+%       \end{subfigure}
+%	
+%	\caption{}
+%\end{figure}
+\subsubsection{Reducing the dimensionality with the autoencoder}
+Next, we move on to reduce dimensionality with the autoencoder. It important first to determine the number of bottleneck nodes. This is done by training the autoencoder for number of nodes ranging from one to eight and plot the loss function with the number of bottleneck nodes in Figure \ref{fig:ae_loss_function}. We observe that an "elbow" \cite{elbow} is formed for number of bottleneck nodes $c=2$, even though admittedly the elbow is not clear.
+\subsubsection{Clustering}
+Subsequently, we train the autoencoder for $c=2$ and keep the lower dimensional representation of our data, the code. With this output we train Gaussian mixture models for different number of components, and we plot the BIC in Figure \ref{fig:ae_bic}. The minimum value is acquired for number of Gaussian components $N_G=5$. The next step is to determine the number of different clusters, by merging each time two components and minimising the entropy of the resulting clustering. The plot of this entropy with the number of clusters is given in Figure \ref{fig:se_entropy}, and an elbow is present for number of clusters $K=2$. The GMM now clusters the data in the lower dimensional represention into two distinct clusters (see Figure \ref{fig:clust_code}) that likely represent the two distinct phases,  namely, FCC and fluid.
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{subfigure}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/autoencoder_loss.png}
+    \caption{MSE of the autoencoder as a function of the number of bottleneck nodes. We notice the presence of an "elbow" at $c=2$, highlighted in red.}
+    \label{fig:ae_loss_function}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/gmm_autoencoder_bic.png}
+    \caption{BIC of GMMs as a function of the number of its components. The minimum for $N_G=5$ is highlighted in red.}
+    \label{fig:ae_bic}
+  \end{subfigure}
+
+  \vspace{1cm}
+
+  \begin{subfigure}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/gmm_entropy.png}
+    \caption{Entropy of the resulting clustering made by GMMs as a function of the number of clusters. We detect an elbow for $K=2$, highlighted in red.}
+    \label{fig:se_entropy}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/autoencoder_2d.png}
+    \caption{Projection of the vector $\bm{Q}(i)$ onto the 2-dimensional space found by the encoder. Colors represent the distinct environments identified by the clustering.}
+    \label{fig:clust_code}
+  \end{subfigure}
+  
+  \caption{Analysis snapshot from }
+  \label{fig:overall}
+\end{figure}
+
+After we have clustered the 2-dimensional representation of our data, we want to go back to the original 8-dimensional vector space and look at the effect of the clustering there. Specifically, we plot the distributions of the averaged BOPs for each cluster in Figure \ref{fig:prob_dists}. We observe that only for $\bar q_4$, $\bar q_6$ and $\bar q_8$ the distributions are relatively well separated. Henceforth, we project our original data onto the planes $\bar q_l-\bar q_k$ for the aforementioned averaged BOPs and we observe the separation there (Figure \ref{fig:separations}).
+
+\begin{figure}[!htbp]
+	\centering
+	\includegraphics[scale = 0.6]{images/prob_dists.png}
+	\caption{Probability distributions of averaged BOPs for each cluster. We observe that they are well separated for $\bar q_4$, $\bar q_6$ and $\bar q_8$}
+	\label{fig:prob_dists}
+\end{figure}
+
+\begin{figure}[!htbp]
+	\includegraphics[width = \linewidth]{images/separations.png}	
+	\caption{Projections of clustered data in the original 8-dimensional space.}
+	\label{fig:separations}
+\end{figure}
+
+
+
+\subsubsection{Relative importance}
+
+Finally, after we have found that the averaged BOPs that have predictive power for the resulting clustering, we want to rank them by predictive performance, by carrying out contribution analysis. The results are given in Figure
+
+\begin{figure}[!htpb]
+	\centering
+	\includegraphics[scale=0.7]{images/relative_importance.png}
+	\caption{Relative importance of each averaged BOP. }
+	\label{fig:relative_importance}
+\end{figure}
+
+\section{Conclusions \& Outlook}\label{conclusion}
+
+The results we got in Section \ref{results} point to the fact that indeed unsupervised learning can be used to detect local phase of materials. For a system with hard spheres, the averaged BOPs that predict the local phase of each particles, in order of importance are $\bar q_8$, $\bar q_6$ and $\bar q_4$. Our results seem to agree sufficiently with the ones provided in \cite{main}. For future work, I would like to apply the methodology in colloidal systems and detect the self assembly products that are formed, as is done in \cite{main}.
+
+
+
+
+
+\begin{thebibliography}{9}
+\bibitem{main}
+Emanuele Boattini, Morjolein Dijkstra, Laura Filion (2019): Unsupervised learning for local structure detection in colloidal systems, arXiv:1907.02420v1
+
+\bibitem{bops}
+J. Steinhardt, D. R. Nelson, and M. Ronchetti, Phys. Rev. B 28, 784 (1983).
+
+\bibitem{sanns}
+J. A. van Meel, L. Filion, C. Valeriani, and D. Frenkel, J. Chem. Phys. 136,234107 (2012).
+
+\bibitem{autoencoders}
+C. M. Bishop, Neural Networks for Pattern Recognition (Oxford University Press, Inc., New York, NY, USA, 1995).
+
+\bibitem{elbow}
+S. Salvador and P. Chan, 16th IEEE International Conference on Tools with Artificial Intelligence , 576 (2004).
+
+\bibitem{contranal}
+M. Gevrey, I. Dimopoulos, and S. Lek, Ecol. Model. 160, 249 (2003).
+
+\bibitem{bic}
+G. Schwarz, Ann. Statist. 6, 461 (1978).
+
+\bibitem{clustering}
+J. Baudry, A. Raftery, G. Celeux, K. Lo, and R. Gottardo, J. Comput. Graph. Stat. 19, 332 (2010).
+
+\end{thebibliography}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\end{document}
